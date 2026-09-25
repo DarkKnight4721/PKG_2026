@@ -426,9 +426,9 @@
   let lastHue = 205;
   let warnTimer = null;
 
-  function setPair(key, val) {
-    els[key].num.value = val;
-    els[key].range.value = val;
+  function setPair(key, val, skipEl) {
+    if (els[key].num !== skipEl) els[key].num.value = val;
+    if (els[key].range !== skipEl) els[key].range.value = val;
   }
 
   function toHex(n) { return clamp(Math.round(n), 0, 255).toString(16).padStart(2, '0'); }
@@ -443,7 +443,7 @@
     }
   }
 
-  function refreshAll(warn) {
+  function refreshAll(warn, activeEl) {
     const { r, g, b } = rgbState;
     const xyz = rgbToXyz(r, g, b);
     const lab = xyzToLab(xyz.x, xyz.y, xyz.z);
@@ -452,15 +452,15 @@
     let h;
     if (hlsRaw.achromatic) { h = lastHue; } else { h = hlsRaw.h; lastHue = h; }
 
-    setPair('x', xyz.x.toFixed(2));
-    setPair('y', xyz.y.toFixed(2));
-    setPair('z', xyz.z.toFixed(2));
-    setPair('labL', lab.L.toFixed(2));
-    setPair('laba', lab.a.toFixed(2));
-    setPair('labb', lab.b.toFixed(2));
-    setPair('h', h.toFixed(0));
-    setPair('hlsl', (hlsRaw.l * 100).toFixed(1));
-    setPair('s', (hlsRaw.s * 100).toFixed(1));
+    setPair('x', xyz.x.toFixed(2), activeEl);
+    setPair('y', xyz.y.toFixed(2), activeEl);
+    setPair('z', xyz.z.toFixed(2), activeEl);
+    setPair('labL', lab.L.toFixed(2), activeEl);
+    setPair('laba', lab.a.toFixed(2), activeEl);
+    setPair('labb', lab.b.toFixed(2), activeEl);
+    setPair('h', h.toFixed(0), activeEl);
+    setPair('hlsl', (hlsRaw.l * 100).toFixed(1), activeEl);
+    setPair('s', (hlsRaw.s * 100).toFixed(1), activeEl);
 
     els.h.num.classList.toggle('is-ndf', hlsRaw.achromatic);
     els.h.range.classList.toggle('is-ndf', hlsRaw.achromatic);
@@ -476,40 +476,46 @@
     showWarning(!!warn);
   }
 
-  function applyRgb(r, g, b, warn) {
+  function applyRgb(r, g, b, warn, activeEl) {
     rgbState = { r: clamp(r, 0, 255), g: clamp(g, 0, 255), b: clamp(b, 0, 255) };
-    refreshAll(warn);
+    refreshAll(warn, activeEl);
   }
 
   function bindPair(key, onChange) {
-    els[key].num.addEventListener('input', () => { els[key].range.value = els[key].num.value; onChange(); });
-    els[key].range.addEventListener('input', () => { els[key].num.value = els[key].range.value; onChange(); });
+    els[key].num.addEventListener('input', (e) => { els[key].range.value = els[key].num.value; onChange(e.target); });
+    els[key].range.addEventListener('input', (e) => { els[key].num.value = els[key].range.value; onChange(e.target); });
+    // Once the person leaves the field, normalise it (rounded/clamped) like every other field.
+    els[key].num.addEventListener('blur', () => refreshAll(false));
   }
 
-  function onXyzChange() {
-    const x = parseFloat(els.x.num.value) || 0;
-    const y = parseFloat(els.y.num.value) || 0;
-    const z = parseFloat(els.z.num.value) || 0;
+  function onXyzChange(source) {
+    const x = parseFloat(els.x.num.value);
+    const y = parseFloat(els.y.num.value);
+    const z = parseFloat(els.z.num.value);
+    if (Number.isNaN(x) || Number.isNaN(y) || Number.isNaN(z)) return; // still mid-typing (e.g. "-", "1.")
     const conv = xyzToRgb(x, y, z);
-    applyRgb(conv.r, conv.g, conv.b, conv.clamped);
+    applyRgb(conv.r, conv.g, conv.b, conv.clamped, source);
   }
 
-  function onLabChange() {
-    const L = parseFloat(els.labL.num.value) || 0;
-    const a = parseFloat(els.laba.num.value) || 0;
-    const b = parseFloat(els.labb.num.value) || 0;
+  function onLabChange(source) {
+    const L = parseFloat(els.labL.num.value);
+    const a = parseFloat(els.laba.num.value);
+    const b = parseFloat(els.labb.num.value);
+    if (Number.isNaN(L) || Number.isNaN(a) || Number.isNaN(b)) return;
     const xyz = labToXyz(L, a, b);
     const conv = xyzToRgb(xyz.x, xyz.y, xyz.z);
-    applyRgb(conv.r, conv.g, conv.b, conv.clamped);
+    applyRgb(conv.r, conv.g, conv.b, conv.clamped, source);
   }
 
-  function onHlsChange() {
-    const h = parseFloat(els.h.num.value) || 0;
-    const l = (parseFloat(els.hlsl.num.value) || 0) / 100;
-    const s = (parseFloat(els.s.num.value) || 0) / 100;
+  function onHlsChange(source) {
+    const h = parseFloat(els.h.num.value);
+    const lPct = parseFloat(els.hlsl.num.value);
+    const sPct = parseFloat(els.s.num.value);
+    if (Number.isNaN(h) || Number.isNaN(lPct) || Number.isNaN(sPct)) return;
+    const l = lPct / 100, s = sPct / 100;
     lastHue = h;
     const rgb01 = hlsToRgb(h, l, s);
-    applyRgb(rgb01.r * 255, rgb01.g * 255, rgb01.b * 255, false);
+    applyRgb(rgb01.r * 255, rgb01.g * 255, rgb01.b * 255, false, source);
   }
 
   ['x', 'y', 'z'].forEach(k => bindPair(k, onXyzChange));
