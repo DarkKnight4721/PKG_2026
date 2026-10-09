@@ -1,1 +1,1 @@
-[Открыть веб-приложение](https://DarkKnight4721.github.io/PKG_2026/Lab2/index.html)
+[Открыть веб-приложение](https://DarkKnight4721.github.io/PKG_2026/Lab2/Инспектор растровых файлов.html)
