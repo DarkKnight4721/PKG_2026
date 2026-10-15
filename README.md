@@ -1,1 +1,1 @@
-[Открыть веб-приложение](https://DarkKnight4721.github.io/PKG_2026/Lab2/index2.html)
+[Открыть веб-приложение](https://DarkKnight4721.github.io/PKG_2026/Lab2/index.html)
