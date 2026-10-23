@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ЛР 3 — сглаживание и пороговая обработка</title>
+<style>
+:root{--bg:#e9ecef;--pn:#fff;--fg:#14181c;--mu:#5d6670;--ac:#1f5eff;--bd:#cfd5db;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#101316;--pn:#1a1e23;--fg:#e8ecef;--mu:#98a2ad;--ac:#6b97ff;--bd:#2e353c;color-scheme:dark}}
+:root[data-theme=dark]{--bg:#101316;--pn:#1a1e23;--fg:#e8ecef;--mu:#98a2ad;--ac:#6b97ff;--bd:#2e353c;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--bd);background:var(--pn)}
+h1{font-size:17px;margin:0}#st{color:var(--mu)}
+.wrap{display:flex;gap:12px;padding:12px;flex-wrap:wrap;align-items:flex-start}
+aside{flex:0 0 270px;max-width:100%;background:var(--pn);border:1px solid var(--bd);border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:10px}
+main{flex:1 1 560px;min-width:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+figure{margin:0;background:var(--pn);border:1px solid var(--bd);border-radius:6px;padding:8px}
+figcaption{font-weight:600;margin-bottom:6px}
+canvas{display:block;max-width:100%;height:auto}
+canvas.h{width:100%;margin-top:6px;border-bottom:1px solid var(--bd)}
+label{display:flex;flex-direction:column;gap:3px;color:var(--mu)}label.row{flex-direction:row;align-items:center;gap:6px}
+output{color:var(--fg);font-weight:600}
+select,button,input[type=file]{font:inherit;padding:5px;border:1px solid var(--bd);border-radius:4px;background:var(--bg);color:var(--fg)}
+button{cursor:pointer}button:hover{border-color:var(--ac)}
+input[type=range],progress{width:100%;accent-color:var(--ac)}
+#smp{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}#smp button{padding:3px 6px;font-size:12px}
+:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+</style></head><body>
+<header><h1>Сглаживание и пороговая обработка</h1><span id="st">Загрузите изображение или выберите тестовое</span></header>
+<div class="wrap">
+<aside>
+<label>Своё изображение<input type="file" id="f" accept="image/*"></label>
+<label>Тестовая база<div id="smp"></div></label>
+<label>Метод<select id="op"></select></label>
+<div id="ps" style="display:flex;flex-direction:column;gap:10px"></div>
+<label>Обработка краёв<select id="ed"><option value="0">Clamp (дублирование границы)</option><option value="1">Reflect (зеркало)</option></select></label>
+<label id="cml">Каналы<select id="cm"><option value="1">RGB — по каналам</option><option value="0">Яркость (серый)</option></select></label>
+<label class="row"><input type="checkbox" id="mt" checked>Многопоточность, воркеров: <output id="nw"></output></label>
+<progress id="pg" value="0" max="1"></progress>
+<button id="ap">Результат становится исходным</button>
+</aside>
+<main>
+<figure><figcaption>До</figcaption><canvas id="c0"></canvas><canvas id="h0" class="h"></canvas></figure>
+<figure><figcaption>После</figcaption><canvas id="c1"></canvas><canvas id="h1" class="h"></canvas></figure>
+</main></div>
+
+<script>
+/* ===== СЛОЙ 3. Processing Layer: чистые функции, ничего не знают про UI и указатели =====
+   Вход: буфер с рамкой радиуса r (rows+2r строк по pw=w+2r значений). Выход: новый буфер rows*w. */
+function KER(){
+const K={};
+// свёртка: разделяемая (строки, затем столбцы: O(K·N²)) или полная 2D (O(K²·N²)) — для сравнения скорости
+function conv(s,pw,rows,w,r,k,full){const n=2*r+1,o=new Float32Array(w*rows);
+if(full){for(let y=0;y<rows;y++)for(let x=0;x<w;x++){let a=0;for(let j=0;j<n;j++)for(let i=0;i<n;i++)a+=s[(y+j)*pw+x+i]*k[j]*k[i];o[y*w+x]=a}return o}
+const ph=rows+2*r,t=new Float32Array(w*ph);
+for(let y=0;y<ph;y++)for(let x=0;x<w;x++){let a=0;for(let i=0;i<n;i++)a+=s[y*pw+x+i]*k[i];t[y*w+x]=a}
+for(let y=0;y<rows;y++)for(let x=0;x<w;x++){let a=0;for(let i=0;i<n;i++)a+=t[(y+i)*w+x]*k[i];o[y*w+x]=a}return o}
+K.box=(s,pw,rows,w,r,P)=>conv(s,pw,rows,w,r,new Float32Array(2*r+1).fill(1/(2*r+1)),P.s==1);
+K.gauss=(s,pw,rows,w,r,P)=>{const k=new Float32Array(2*r+1);let z=0;for(let i=-r;i<=r;i++)z+=k[i+r]=Math.exp(-i*i/(2*P.a*P.a));for(let i=0;i<k.length;i++)k[i]/=z;return conv(s,pw,rows,w,r,k,P.s==1)};
+// локальные пороги: среднее и σ в окне (2r+1)² через интегральные изображения (SAT) либо прямым перебором
+// m=0 Ниблэк: T=m+k·σ;  m=1 Саувола: T=m·(1+k·(σ/R−1));  m=2 адаптивный (скользящее среднее): T=m·(1−t)
+K.loc=(s,pw,rows,w,r,P)=>{const ph=rows+2*r,W=pw+1,n=(2*r+1)**2,o=new Float32Array(w*rows),dr=P.s==1,R=P.R||128,k=P.k;let A,B;
+if(!dr){A=new Float64Array(W*(ph+1));B=new Float64Array(W*(ph+1));
+for(let y=0;y<ph;y++){let a=0,b=0;for(let x=0;x<pw;x++){const v=s[y*pw+x];a+=v;b+=v*v;A[(y+1)*W+x+1]=A[y*W+x+1]+a;B[(y+1)*W+x+1]=B[y*W+x+1]+b}}}
+for(let y=0;y<rows;y++)for(let x=0;x<w;x++){let a=0,b=0;
+if(dr){for(let j=0;j<=2*r;j++)for(let i=0;i<=2*r;i++){const u=s[(y+j)*pw+x+i];a+=u;b+=u*u}}
+else{const x1=x+2*r+1,y1=y+2*r+1;a=A[y1*W+x1]-A[y*W+x1]-A[y1*W+x]+A[y*W+x];b=B[y1*W+x1]-B[y*W+x1]-B[y1*W+x]+B[y*W+x]}
+const m=a/n,sd=Math.sqrt(Math.max(0,b/n-m*m)),v=s[(y+r)*pw+x+r],t=P.m==0?m+k*sd:P.m==1?m*(1+k*(sd/R-1)):m*(1-k);
+o[y*w+x]=v>t?255:0}return o};
+// CLAHE: интерполяция таблиц тайлов (LUT) по полосе строк; y0 — смещение полосы в общем изображении
+K.clahe=(s,pw,rows,w,r,P)=>{const nt=P.nt,tw=Math.ceil(w/nt),th=Math.ceil(P.h/nt),L=P.luts,o=new Float32Array(w*rows),c=v=>Math.max(0,Math.min(nt-1,v));
+for(let y=0;y<rows;y++){const fy=c((P.y0+y+.5)/th-.5),ya=Math.floor(fy),yb=Math.min(nt-1,ya+1),wy=fy-ya;
+for(let x=0;x<w;x++){const fx=c((x+.5)/tw-.5),xa=Math.floor(fx),xb=Math.min(nt-1,xa+1),wx=fx-xa,v=s[y*pw+x]|0,
+a=L[(ya*nt+xa)*256+v]*(1-wx)+L[(ya*nt+xb)*256+v]*wx,b=L[(yb*nt+xa)*256+v]*(1-wx)+L[(yb*nt+xb)*256+v]*wx;o[y*w+x]=a*(1-wy)+b*wy}}return o};
+return K}
+// CLAHE, шаг 1: гистограмма каждого тайла, отсечение по clip limit, перераспределение излишка, CDF → LUT (256 значений на тайл)
+function claheLUTs(p,w,h,nt,cl){const tw=Math.ceil(w/nt),th=Math.ceil(h/nt),L=new Float32Array(nt*nt*256);
+for(let ty=0;ty<nt;ty++)for(let tx=0;tx<nt;tx++){const x1=Math.min(w,(tx+1)*tw),y1=Math.min(h,(ty+1)*th),hs=new Float64Array(256);let n=0;
+for(let y=ty*th;y<y1;y++)for(let x=tx*tw;x<x1;x++){hs[p[y*w+x]|0]++;n++}
+const lim=Math.max(1,cl*n/256);let ex=0;for(let i=0;i<256;i++)if(hs[i]>lim){ex+=hs[i]-lim;hs[i]=lim}
+const add=ex/256,b=(ty*nt+tx)*256;let c=0;for(let i=0;i<256;i++){c+=hs[i]+add;L[b+i]=Math.min(255,c/Math.max(n,1)*255)}}return L}
+</script>
+<script>
+/* ===== СЛОЙ 2. Memory & Pixel Access Layer: сырые байты, рамка Clamp/Reflect, пул Web Workers ===== */
+const $=id=>document.getElementById(id),KM=KER(),NW=Math.min(navigator.hardwareConcurrency||4,8),CFG={edge:0,mt:true};
+let pool=null,seq=0,pend={},tot=0,dn=0;
+try{const u=URL.createObjectURL(new Blob([`const K=(${KER})();onmessage=e=>{const d=e.data,o=K[d.op](d.src,d.pw,d.rows,d.w,d.r,d.P);postMessage({id:d.id,o},[o.buffer])}`],{type:'text/javascript'}));
+pool=[...Array(NW)].map(()=>{const k=new Worker(u);k.onmessage=e=>{const p=pend[e.data.id];delete pend[e.data.id];p.res(e.data.o)};
+k.onerror=()=>{if(!pool)return;pool=null;$('nw').textContent='недоступны';const q=pend;pend={};for(const i in q){const j=q[i].j;q[i].res(KM[j.op](j.src,j.pw,j.rows,j.w,j.r,j.P))}};return k});$('nw').textContent=NW}
+catch(e){pool=null;$('nw').textContent='недоступны'}
+const threads=()=>pool&&CFG.mt?NW:1;
+const run=(j,i)=>new Promise(res=>{if(threads()>1){j.id=++seq;pend[j.id]={res,j};pool[i%NW].postMessage(j)}else setTimeout(()=>res(KM[j.op](j.src,j.pw,j.rows,j.w,j.r,j.P)))});
+// рамка шириной r вокруг плоскости: Clamp — дублирование границы, Reflect — зеркальное отражение
+function pad(p,w,h,r,m){if(!r)return p;const pw=w+2*r,ph=h+2*r,o=new Float32Array(pw*ph),f=(i,n)=>i<0?(m?Math.min(-i-1,n-1):0):i>=n?(m?Math.max(2*n-i-1,0):n-1):i;
+for(let y=0;y<ph;y++){const sy=f(y-r,h)*w;for(let x=0;x<pw;x++)o[y*pw+x]=p[sy+f(x-r,w)]}return o}
+// горизонтальные полосы с «ореолом» в r строк; каждая полоса считается в своём потоке
+async function proc(op,p,w,h,P,r){const pw=w+2*r,pd=pad(p,w,h,r,CFG.edge),n=Math.min(threads(),h),out=new Float32Array(w*h);tot+=n;
+await Promise.all([...Array(n)].map((_,i)=>{const y0=Math.floor(h*i/n),y1=Math.floor(h*(i+1)/n);
+return run({op,src:pd.slice(y0*pw,(y1+2*r)*pw),pw,rows:y1-y0,w,r,P:{...P,y0}},i).then(o=>{out.set(o,y0*w);$('pg').value=++dn/tot})}))
+;return out}
+const planes=(d,n,color)=>(color?[0,1,2]:[-1]).map(c=>{const a=new Float32Array(n);for(let i=0;i<n;i++)a[i]=c<0?.299*d[4*i]+.587*d[4*i+1]+.114*d[4*i+2]:d[4*i+c];return a});
+function toRGBA(pl,n){const o=new Uint8ClampedArray(4*n),k=pl.length==3;for(let i=0;i<n;i++){o[4*i]=pl[0][i];o[4*i+1]=pl[k?1:0][i];o[4*i+2]=pl[k?2:0][i];o[4*i+3]=255}return o}
+const LOCM={nib:0,sau:1,brad:2};
+async function runOp(op,P,d,w,h,color){const n=w*h;tot=dn=0;
+if(op=='clahe'){const V=color?new Float32Array(n).map((_,i)=>Math.max(d[4*i],d[4*i+1],d[4*i+2])):planes(d,n,0)[0];
+const N=await proc('clahe',V,w,h,{nt:P.r,h,luts:claheLUTs(V,w,h,P.r,P.a)},0);if(!color)return toRGBA([N],n);
+const o=new Uint8ClampedArray(4*n);for(let i=0;i<n;i++){o[4*i+3]=255;if(!V[i]){o[4*i]=o[4*i+1]=o[4*i+2]=N[i];continue}const k=N[i]/V[i];o[4*i]=d[4*i]*k;o[4*i+1]=d[4*i+1]*k;o[4*i+2]=d[4*i+2]*k}return o}
+if(op=='box'||op=='gauss')return toRGBA(await Promise.all(planes(d,n,color).map(p=>proc(op,p,w,h,P,P.r))),n);
+return toRGBA([await proc('loc',planes(d,n,0)[0],w,h,{...P,m:LOCM[op],k:P.a},P.r)],n)}
+</script>
+<script>
+/* ===== СЛОЙ 1. Presentation Layer: только отображение, гистограммы, слайдеры ===== */
+const OPS={
+box:['НЧ-фильтры','Box-фильтр (усредняющий)',['r','Радиус',1,20,1,3],['s','Вычисление',['Разделяемая (1D + 1D)','Полная 2D-свёртка']]],
+gauss:['НЧ-фильтры','Фильтр Гаусса',['r','Радиус',1,20,1,3],['a','σ',.5,10,.1,1.5],['s','Вычисление',['Разделяемая (1D + 1D)','Полная 2D-свёртка']]],
+nib:['Локальный порог','Ниблэк',['r','Радиус окна',3,40,1,12],['a','k',-1,.5,.05,-.2],['s','Вычисление',['Интегральное изображение (SAT)','Прямой перебор окна']]],
+sau:['Локальный порог','Саувола',['r','Радиус окна',3,40,1,12],['a','k',.05,.7,.01,.34],['R','R (диапазон σ)',32,255,1,128],['s','Вычисление',['Интегральное изображение (SAT)','Прямой перебор окна']]],
+brad:['Адаптивный порог','Адаптивный (скользящее среднее, SAT)',['r','Радиус окна',3,40,1,12],['a','Снижение порога t',.02,.5,.01,.15],['s','Вычисление',['Интегральное изображение (SAT)','Прямой перебор окна']]],
+clahe:['Продвинутый режим','CLAHE (адаптивная эквализация с ограничением контраста)',['r','Тайлов по стороне',2,16,1,8],['a','Clip limit',1,10,.5,3]]};
+const ops=$('op');let cur,res,tok=0,tm,g='',og;
+for(const k in OPS){if(OPS[k][0]!=g){g=OPS[k][0];og=document.createElement('optgroup');og.label=g;ops.appendChild(og)}og.appendChild(new Option(OPS[k][1],k))}
+function ui(){$('cml').style.display=['НЧ-фильтры','Продвинутый режим'].includes(OPS[ops.value][0])?'':'none';
+$('ps').innerHTML=OPS[ops.value].slice(2).map(q=>Array.isArray(q[2])?`<label>${q[1]}<select data-k="${q[0]}">${q[2].map((o,i)=>`<option value="${i}">${o}</option>`).join('')}</select></label>`:`<label>${q[1]}: <output>${q[5]}</output><input type="range" data-k="${q[0]}" min="${q[2]}" max="${q[3]}" step="${q[4]}" value="${q[5]}"></label>`).join('')}
+const readP=()=>{const P={};document.querySelectorAll('#ps [data-k]').forEach(e=>P[e.dataset.k]=+e.value);return P};
+const sched=()=>{clearTimeout(tm);tm=setTimeout(exec,120)};
+$('ps').oninput=e=>{if(e.target.type=='range')e.target.previousElementSibling.value=e.target.value;sched()};
+ops.onchange=()=>{ui();sched()};['ed','cm','mt'].forEach(i=>$(i).onchange=sched);
+function show(cv,hc,d,w,h){cv.width=w;cv.height=h;cv.getContext('2d').putImageData(new ImageData(d,w,h),0,0);
+const c=hc.getContext('2d'),H=hc.height=90,hs=new Float64Array(256);hc.width=256;for(let i=0;i<d.length;i+=4)hs[Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2])]++;
+const m=Math.log(1+Math.max(...hs));c.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--ac');for(let i=0;i<256;i++){const v=Math.log(1+hs[i])/m*H;c.fillRect(i,H-v,1,v)}}
+function setSrc(im){cur={w:im.width,h:im.height,d:im.data};show($('c0'),$('h0'),cur.d,cur.w,cur.h);exec()}
+$('f').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{const s=Math.min(1,1600/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*s|0;c.height=im.height*s|0;const x=c.getContext('2d');x.drawImage(im,0,0,c.width,c.height);setSrc(x.getImageData(0,0,c.width,c.height))};im.src=r.result};r.readAsDataURL(f)};
+$('ap').onclick=()=>{if(!res)return;cur={w:cur.w,h:cur.h,d:res};show($('c0'),$('h0'),cur.d,cur.w,cur.h);exec()};
+// тестовая база (генерируется): документ с текстом, цветная плашка и круг
+function sample(kind){const w=480,h=320,c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d'),ink=kind=='shade'?'#a6a6a2':'#1d1d1d';
+x.fillStyle='#e8e8e4';x.fillRect(0,0,w,h);x.fillStyle=ink;x.font='bold 26px sans-serif';x.fillText('Лабораторная работа 3',20,45);
+x.font='16px sans-serif';for(let i=0;i<3;i++)x.fillText('Сглаживание и пороговая обработка',20,80+i*22);
+x.font='11px sans-serif';for(let i=0;i<9;i++)x.fillText('Мелкий текст для проверки фильтров и локальных порогов',20,170+i*15);
+x.beginPath();x.arc(400,90,45,0,7);x.fill();x.lineWidth=1;x.strokeStyle=ink;for(let i=0;i<6;i++){x.beginPath();x.moveTo(340,170+i*14);x.lineTo(460,176+i*14);x.stroke()}
+const im=x.getImageData(0,0,w,h),d=im.data,rn=()=>Math.sqrt(-2*Math.log(1-Math.random()))*Math.cos(6.2832*Math.random());
+if(kind=='low')for(let i=0;i<d.length;i++)if(i%4<3)d[i]=90+d[i]*.3;
+if(kind=='sp')for(let i=0;i<w*h;i++)if(Math.random()<.08){const v=Math.random()<.5?0:255;d[4*i]=d[4*i+1]=d[4*i+2]=v}
+if(kind=='gn')for(let i=0;i<d.length;i++)if(i%4<3)d[i]+=rn()*25;
+if(kind=='bgn')for(let i=0;i<d.length;i++)if(i%4<3)d[i]+=rn()*8;
+if(kind=='shade')for(let i=0;i<w*h;i++){const f=.12+.88*((i%w)/w);for(let k=0;k<3;k++)d[4*i+k]=d[4*i+k]*f+rn()*1.5}
+setSrc(im)}
+[['no','Оригинал'],['low','Малоконтрастное (для CLAHE)'],['sp','Шум «соль-перец»'],['gn','Гауссов шум'],['bgn','Документ: шумный фон (Саувола лучше Ниблэка)'],['shade','Документ: сильная тень (нужен адаптивный)']].forEach(([k,t])=>{const b=document.createElement('button');b.textContent=t;b.onclick=()=>sample(k);$('smp').appendChild(b)});
+async function exec(){if(!cur)return;const my=++tok,op=ops.value,P=readP(),{w,h,d}=cur,t0=performance.now();CFG.edge=+$('ed').value;CFG.mt=$('mt').checked;$('pg').value=0;let o;
+try{o=await runOp(op,P,d,w,h,$('cm').value=='1')}catch(err){$('st').textContent='Ошибка: '+err.message;return}
+if(my!=tok)return;res=o;show($('c1'),$('h1'),o,w,h);$('pg').value=1;
+$('st').textContent=`${OPS[op][1]} · ${w}×${h} · ${Math.round(performance.now()-t0)} мс · потоков: ${threads()}`}
+ops.value='sau';ui();sample('bgn');
+</script></body></html>
