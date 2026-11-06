@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ЛР4 — Базовые растровые алгоритмы</title>
+<style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1a;--mut:#667085;--card:#f3f4f6;--bd:#d0d4da;--px:#2563eb;--ax:#dc2626;--gr:#e2e5ea;--c1:#2563eb;--c2:#dc2626;--c3:#16a34a;--c4:#d97706;--c5:#9333ea;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111418;--fg:#e6e8eb;--mut:#98a2b3;--card:#1b2027;--bd:#343b45;--px:#60a5fa;--ax:#f87171;--gr:#2a313b}}
+:root[data-theme="dark"]{--bg:#111418;--fg:#e6e8eb;--mut:#98a2b3;--card:#1b2027;--bd:#343b45;--px:#60a5fa;--ax:#f87171;--gr:#2a313b}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:12px}
+h1{font-size:20px;margin:0 0 8px}h2{font-size:16px;margin:18px 0 6px}
+.row{display:flex;gap:12px;flex-wrap:wrap}.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:10px}
+#cv{width:100%;max-width:760px;height:auto;border:1px solid var(--bd);border-radius:6px;touch-action:none;cursor:grab;background:var(--bg)}
+.side{flex:1;min-width:260px;max-width:420px}
+label{display:inline-flex;align-items:center;gap:4px;margin:3px 8px 3px 0}
+input[type=number]{width:62px}select,input,button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--bd);border-radius:5px;padding:3px 6px}
+button{cursor:pointer;background:var(--px);color:#fff;border:0;padding:5px 12px;margin:3px 4px 3px 0}button.s{background:var(--card);color:var(--fg);border:1px solid var(--bd)}
+.hid{display:none}.sc{overflow:auto;max-height:260px}
+table{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}td,th{border:1px solid var(--bd);padding:2px 7px;text-align:right}th{background:var(--card);position:sticky;top:0}
+canvas.ch{width:100%;max-width:600px;height:auto}.m{color:var(--mut);font-size:12.5px}code{background:var(--card);padding:0 4px;border-radius:3px}
+</style></head><body>
+<h1>ЛР4 · Базовые растровые алгоритмы (виртуальный растр)</h1>
+<div class="row">
+ <div style="flex:2;min-width:300px"><canvas id="cv" width="760" height="560"></canvas>
+  <div class="m">Колесо/ползунок — масштаб, перетаскивание — сдвиг. Клетка = один пиксель виртуальной сетки; целое число (x, y) — <b>центр клетки</b>, границы клетки проходят по x±0,5 и y±0,5. Красные оси проходят через центры клеток с x=0 и y=0, подписи стоят под/рядом с центрами клеток.</div></div>
+ <div class="side card">
+  <label>Алгоритм <select id="alg"><option value="step">Пошаговый</option><option value="dda" selected>ЦДА</option><option value="bres">Брезенхем (линия)</option><option value="wu">Ву (сглаживание)</option><option value="cp">Кастл–Питвей</option><option value="circ">Брезенхем (окружность)</option></select></label><br>
+  <span id="fl"><label>x₀<input id="x0" type="number" value="-9"></label><label>y₀<input id="y0" type="number" value="-4"></label><label>x₁<input id="x1" type="number" value="12"></label><label>y₁<input id="y1" type="number" value="7"></label></span>
+  <span id="fc" class="hid"><label>центр x<input id="cx" type="number" value="0"></label><label>y<input id="cy" type="number" value="0"></label><label>R<input id="r" type="number" value="10" min="1"></label></span><br>
+  <label>Масштаб <input id="sc" type="range" min="4" max="48" value="22"></label><label><input id="ov" type="checkbox">накладывать</label><br>
+  <button id="go">Построить</button><button class="s" id="rnd">Случайный</button><button class="s" id="clr">Очистить</button>
+  <div id="info" class="m" style="margin-top:6px"></div>
+ </div></div>
+<h2>Пример с сопроводительными вычислениями</h2><div class="sc card"><div id="tr"></div></div>
+<h2>Стресс-тест (бенчмарк) — только виртуальный растр, без UI</h2>
+<div class="card"><button id="bb">Запустить бенчмарк</button> <span id="bs" class="m"></span>
+ <div id="bt" class="sc"></div><div class="row"><canvas id="c1" class="ch" width="600" height="320"></canvas><canvas id="c2" class="ch" width="600" height="320"></canvas><canvas id="c3" class="ch" width="600" height="320"></canvas></div>
+ <p class="m">Тест: «солнце» из случайных отрезков с центром в (0,0) (углы 0–360°, т.е. все 8 октантов), растр 2048×2048, замер <code>performance.now()</code> (высокоточный таймер), генерация данных и очистка растра в замер не входят. Окружностей — с случайными центрами и радиусами.</p></div>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+/* ---------- VirtualGrid: хранит массив интенсивностей ---------- */
+class VirtualGrid{
+ constructor(w,h){this.w=w;this.h=h;this.ox=w>>1;this.oy=h>>1;this.a=new Float32Array(w*h)}
+ set(x,y,v){const i=x+this.ox,j=this.oy-y;if(i<0||j<0||i>=this.w||j>=this.h)return;const k=j*this.w+i;if(v>this.a[k])this.a[k]=v}
+ get(x,y){const i=x+this.ox,j=this.oy-y;return(i<0||j<0||i>=this.w||j>=this.h)?0:this.a[j*this.w+i]}
+ clear(){this.a.fill(0)}
+}
+/* ---------- RasterEngine: чистые алгоритмы, только t.setPixel(x,y,intensity) ---------- */
+const R={
+ step(x0,y0,x1,y1,t,L){const dx=x1-x0,dy=y1-y0;
+  if(dx===0&&dy===0){t.setPixel(x0,y0,1);return}
+  if(Math.abs(dx)>=Math.abs(dy)){const k=dy/dx,b=y0-k*x0,s=dx>0?1:-1;
+   for(let x=x0;x!==x1+s;x+=s){const y=k*x+b,r=Math.round(y);t.setPixel(x,r,1);if(L)L.push([x,y.toFixed(3),r])}}
+  else{const k=dx/dy,b=x0-k*y0,s=dy>0?1:-1;
+   for(let y=y0;y!==y1+s;y+=s){const x=k*y+b,r=Math.round(x);t.setPixel(r,y,1);if(L)L.push([y,x.toFixed(3),r])}}},
+ dda(x0,y0,x1,y1,t,L){const dx=x1-x0,dy=y1-y0,n=Math.max(Math.abs(dx),Math.abs(dy));
+  if(n===0){t.setPixel(x0,y0,1);return}
+  const sx=dx/n,sy=dy/n;let x=x0,y=y0;
+  for(let i=0;i<=n;i++){const px=Math.round(x),py=Math.round(y);t.setPixel(px,py,1);if(L)L.push([i,x.toFixed(3),y.toFixed(3),px,py]);x+=sx;y+=sy}},
+ bres(x0,y0,x1,y1,t,L){let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0);const sx=x0<x1?1:-1,sy=y0<y1?1:-1,st=dy>dx;
+  if(st){const q=dx;dx=dy;dy=q}   // dx — главная ось, dy — второстепенная (все 8 октантов)
+  let e=2*dy-dx,x=x0,y=y0;
+  for(let i=0;i<=dx;i++){t.setPixel(x,y,1);if(L)L.push([i,e,x,y]);
+   if(e>0){if(st)x+=sx;else y+=sy;e-=2*dx}
+   if(st)y+=sy;else x+=sx;e+=2*dy}},
+ wu(x0,y0,x1,y1,t,L){const st=Math.abs(y1-y0)>Math.abs(x1-x0);
+  if(st){let q=x0;x0=y0;y0=q;q=x1;x1=y1;y1=q}
+  if(x0>x1){let q=x0;x0=x1;x1=q;q=y0;y0=y1;y1=q}
+  const P=st?(a,b,v)=>t.setPixel(b,a,v):(a,b,v)=>t.setPixel(a,b,v);
+  const dx=x1-x0,g=dx===0?0:(y1-y0)/dx;let y=y0;
+  for(let x=x0;x<=x1;x++){const yi=Math.floor(y),f=y-yi;P(x,yi,1-f);if(f>0)P(x,yi+1,f);
+   if(L)L.push([x,y.toFixed(3),yi,(1-f).toFixed(3),f.toFixed(3)]);y+=g}},
+ cp(x0,y0,x1,y1,t,L){let dx=Math.abs(x1-x0),dy=Math.abs(y1-y0);const sx=x0<x1?1:-1,sy=y0<y1?1:-1,st=dy>dx;
+  if(st){const q=dx;dx=dy;dy=q}
+  let seq;if(dy===0)seq='S'.repeat(dx);else if(dy===dx)seq='D'.repeat(dx);
+  else{let a=dx-dy,b=dy,s='S',d='D';while(a!==b){if(a>b){a-=b;d=s+d}else{b-=a;s=d+s}}seq=(s+d).repeat(a)} // Евклид
+  let x=x0,y=y0;t.setPixel(x,y,1);if(L)L.push([0,'—',x,y]);
+  for(let i=0;i<seq.length;i++){const D=seq.charCodeAt(i)===68;
+   if(st){y+=sy;if(D)x+=sx}else{x+=sx;if(D)y+=sy}
+   t.setPixel(x,y,1);if(L)L.push([i+1,seq[i],x,y])}
+  return seq},
+ circ(cx,cy,r,t,L){let x=0,y=r,d=3-2*r;
+  while(x<=y){t.setPixel(cx+x,cy+y,1);t.setPixel(cx-x,cy+y,1);t.setPixel(cx+x,cy-y,1);t.setPixel(cx-x,cy-y,1);
+   t.setPixel(cx+y,cy+x,1);t.setPixel(cx-y,cy+x,1);t.setPixel(cx+y,cy-x,1);t.setPixel(cx-y,cy-x,1);
+   if(L)L.push([x,y,d]);
+   if(d<0)d+=4*x+6;else{d+=4*(x-y)+10;y--}x++}}
+};
+const NAMES={step:'Пошаговый',dda:'ЦДА',bres:'Брезенхем',wu:'Ву',cp:'Кастл–Питвей',circ:'Окружность'};
+const HEAD={step:['x','y=kx+b','round(y)'],dda:['i','x','y','px','py'],bres:['i','e','x','y'],wu:['x','y (точное)','⌊y⌋','I(⌊y⌋)','I(⌊y⌋+1)'],cp:['i','ход','x','y'],circ:['x','y','d']};
+/* ---------- GridPainter: рисует клетки по данным VirtualGrid ---------- */
+const cv=$('cv'),cx2=cv.getContext('2d'),G=new VirtualGrid(801,801),V={x:0,y:0,s:22};
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function paint(){const W=cv.width,H=cv.height,s=V.s,c=cx2;c.fillStyle=css('--bg');c.fillRect(0,0,W,H);
+ const X=x=>(x-V.x)*s+W/2,Y=y=>H/2-(y-V.y)*s;
+ const x0=Math.floor(V.x-W/2/s)-1,x1=Math.ceil(V.x+W/2/s)+1,y0=Math.floor(V.y-H/2/s)-1,y1=Math.ceil(V.y+H/2/s)+1;
+ c.fillStyle=css('--px');c.globalAlpha=1;
+ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const v=G.get(x,y);if(v>0){c.globalAlpha=Math.max(.12,v);c.fillRect(X(x)-s/2,Y(y)-s/2,s,s)}}
+ c.globalAlpha=1;
+ if(s>=6){c.fillStyle=css('--gr');for(let x=x0;x<=x1;x++)c.fillRect(Math.round(X(x-.5)),0,1,H);for(let y=y0;y<=y1;y++)c.fillRect(0,Math.round(Y(y+.5)),W,1)}
+ c.fillStyle=css('--ax');c.fillRect(0,Math.round(Y(0)),W,2);c.fillRect(Math.round(X(0)),0,2,H);
+ const k=Math.max(1,Math.ceil(30/s));c.fillStyle=css('--fg');c.font='11px system-ui';c.textAlign='center';
+ for(let x=x0;x<=x1;x++)if(x%k===0)c.fillText(x,X(x),Math.min(H-4,Math.max(12,Y(0)+14)));
+ c.textAlign='right';for(let y=y0;y<=y1;y++)if(y%k===0&&y!==0)c.fillText(y,Math.min(W-4,Math.max(26,X(0)-5)),Y(y)+4);
+ c.fillStyle=css('--ax');c.font='bold 13px system-ui';c.fillText('Y',Math.round(X(0))-12,14);c.textAlign='right';c.fillText('X',W-6,Math.round(Y(0))-6)}
+/* ---------- UI ---------- */
+const tgt={setPixel:(x,y,v)=>G.set(x,y,v)};
+function run(alg,p,t,L){return alg==='circ'?R.circ(p.cx,p.cy,p.r,t,L):R[alg](p.x0,p.y0,p.x1,p.y1,t,L)}
+function params(){const g=i=>Math.round(+$(i).value)||0;return{x0:g('x0'),y0:g('y0'),x1:g('x1'),y1:g('y1'),cx:g('cx'),cy:g('cy'),r:Math.max(1,g('r'))}}
+function go(){const alg=$('alg').value,p=params();if(!$('ov').checked)G.clear();
+ const L=[];const seq=run(alg,p,tgt,L);
+ let cnt=0;for(let i=0;i<G.a.length;i++)if(G.a[i]>0)cnt++;
+ // среднее время одного примитива на «чистом» растре
+ const T=new VirtualGrid(801,801),tt={setPixel:(x,y,v)=>T.set(x,y,v)},N=2000;run(alg,p,tt);
+ const t0=performance.now();for(let i=0;i<N;i++)run(alg,p,tt);const us=(performance.now()-t0)/N*1000;
+ $('info').innerHTML=`<b>${NAMES[alg]}</b>: закрашено клеток — ${cnt}; время одного примитива ≈ <b>${us.toFixed(2)} мкс</b> (среднее по ${N} запусков)`+(seq?`<br>Строка ходов (S — шаг по главной оси, D — диагональ): <code>${seq}</code>`:'')+(alg==='wu'?'<br>Яркость клетки = доля покрытия: дробная часть y делит интенсивность между двумя соседними пикселями (Alpha).':'');
+ let h='<table><tr>'+HEAD[alg].map(x=>`<th>${x}</th>`).join('')+'</tr>';
+ for(const r of L.slice(0,400))h+='<tr>'+r.map(x=>`<td>${x}</td>`).join('')+'</tr>';
+ $('tr').innerHTML=h+'</table>'+(alg==='dda'?'<p class="m">ЦДА: sx=dx/n, sy=dy/n, n=max(|dx|,|dy|); на каждом шаге x+=sx, y+=sy и округление.</p>':alg==='bres'?'<p class="m">Брезенхем: e₀=2·Δмин−Δмакс; если e>0 — шаг по второстепенной оси и e−=2·Δмакс; затем e+=2·Δмин. Работает во всех 8 октантах: оси меняются местами при |dy|>|dx|, знаки шагов sx, sy берутся из направления.</p>':alg==='cp'?'<p class="m">Кастл–Питвей: нужные ходы получаются алгоритмом Евклида над счётчиками S и D (S=«главная ось», D=«диагональ»).</p>':'');
+ paint()}
+$('alg').onchange=()=>{const c=$('alg').value==='circ';$('fl').classList.toggle('hid',c);$('fc').classList.toggle('hid',!c)};
+$('go').onclick=go;$('clr').onclick=()=>{G.clear();paint();$('info').textContent='';$('tr').innerHTML=''};
+$('rnd').onclick=()=>{const q=()=>Math.round(Math.random()*30-15);['x0','y0','x1','y1','cx','cy'].forEach(i=>$(i).value=q());$('r').value=Math.round(Math.random()*12+2);go()};
+$('sc').oninput=()=>{V.s=+$('sc').value;paint()};
+cv.onwheel=e=>{e.preventDefault();V.s=Math.min(48,Math.max(4,V.s*(e.deltaY<0?1.1:.9)));$('sc').value=V.s;paint()};
+let dr=null;cv.onpointerdown=e=>{dr={x:e.clientX,y:e.clientY};cv.setPointerCapture(e.pointerId)};
+cv.onpointermove=e=>{if(!dr)return;const k=cv.width/cv.clientWidth;V.x-=(e.clientX-dr.x)*k/V.s;V.y+=(e.clientY-dr.y)*k/V.s;dr={x:e.clientX,y:e.clientY};paint()};
+cv.onpointerup=()=>dr=null;
+/* ---------- Бенчмарк ---------- */
+const BN=2048,COL=['--c1','--c2','--c3','--c4','--c5'],LA=['step','dda','bres','wu','cp'];
+function chart(cvs,title,xl,series){const c=cvs.getContext('2d'),W=cvs.width,H=cvs.height,l=56,b=36,t=24;c.clearRect(0,0,W,H);
+ const mx=Math.max(...series.flatMap(s=>s.p.map(q=>q[1]))),xs=series[0].p.map(q=>q[0]),xm=Math.max(...xs),xn=Math.min(...xs);
+ const X=v=>l+(v-xn)/(xm-xn||1)*(W-l-12),Y=v=>H-b-v/(mx||1)*(H-b-t);
+ c.fillStyle=css('--fg');c.font='12px system-ui';c.textAlign='center';c.fillText(title,W/2,14);c.fillText(xl,W/2,H-4);
+ c.strokeStyle=css('--mut');c.beginPath();c.moveTo(l,t);c.lineTo(l,H-b);c.lineTo(W-8,H-b);c.stroke();
+ c.textAlign='right';for(let i=0;i<=4;i++){const v=mx*i/4;c.fillText(v.toFixed(0),l-4,Y(v)+4)}
+ c.textAlign='center';xs.forEach(v=>c.fillText(v>=1000?v/1000+'k':v,X(v),H-b+14));
+ series.forEach((s,i)=>{c.strokeStyle=css(COL[i%5]);c.lineWidth=2;c.beginPath();s.p.forEach((q,j)=>j?c.lineTo(X(q[0]),Y(q[1])):c.moveTo(X(q[0]),Y(q[1])));c.stroke();
+  c.fillStyle=css(COL[i%5]);c.textAlign='left';c.fillText('■ '+s.n,l+8+i*78,t+10)});c.lineWidth=1;
+ c.save();c.translate(12,H/2);c.rotate(-Math.PI/2);c.fillStyle=css('--fg');c.textAlign='center';c.fillText('время, мс',0,0);c.restore()}
+const nx=()=>new Promise(r=>setTimeout(r,0));
+$('bb').onclick=async()=>{$('bb').disabled=true;const g=new VirtualGrid(BN,BN),t={setPixel:(x,y,v)=>g.set(x,y,v)};
+ const tm=(f)=>{g.clear();const a=performance.now();f();return performance.now()-a};
+ const mk=(n,len)=>{const a=new Int32Array(4*n);for(let i=0;i<n;i++){const th=Math.random()*2*Math.PI,l=len?len:10+Math.random()*490;a[4*i+2]=Math.round(l*Math.cos(th));a[4*i+3]=Math.round(l*Math.sin(th))}return a};
+ const lines=(f,a,n)=>{for(let i=0;i<n;i++)f(a[4*i],a[4*i+1],a[4*i+2],a[4*i+3],t)};
+ const A=mk(100000),Cn=50000,C=new Int32Array(3*Cn);for(let i=0;i<Cn;i++){const r=1+Math.floor(Math.random()*400);C[3*i]=Math.round((Math.random()*2-1)*(1000-r));C[3*i+1]=Math.round((Math.random()*2-1)*(1000-r));C[3*i+2]=r}
+ const circs=n=>{for(let i=0;i<n;i++)R.circ(C[3*i],C[3*i+1],C[3*i+2],t)};
+ LA.forEach(k=>lines(R[k],A,500));circs(500);
+ const S1=LA.map(k=>({n:NAMES[k],p:[]})),S3=[{n:'Окружн.',p:[]}],S2=LA.map(k=>({n:NAMES[k],p:[]})),sum={};
+ const Ns=[20000,40000,60000,80000,100000];
+ for(const n of Ns){for(let i=0;i<5;i++){$('bs').textContent=`линии: N=${n}, ${NAMES[LA[i]]}…`;await nx();const ms=tm(()=>lines(R[LA[i]],A,n));S1[i].p.push([n,ms]);if(n===1e5)sum[LA[i]]=ms}}
+ for(let n=10000;n<=50000;n+=10000){$('bs').textContent=`окружности: N=${n}…`;await nx();const ms=tm(()=>circs(n));S3[0].p.push([n,ms]);if(n===5e4)sum.circ=ms}
+ for(let l=100;l<=500;l+=100){const B=mk(20000,l);for(let i=0;i<5;i++){$('bs').textContent=`длина ${l}, ${NAMES[LA[i]]}…`;await nx();S2[i].p.push([l,tm(()=>lines(R[LA[i]],B,20000))])}}
+ let px=0;for(let i=0;i<1e5;i++)px+=Math.max(Math.abs(A[4*i+2]),Math.abs(A[4*i+3]))+1;
+ let h=`<table><tr><th>Алгоритм</th><th>100 000 отрезков, мс</th><th>нс / пиксель</th></tr>`;
+ LA.forEach(k=>h+=`<tr><td>${NAMES[k]}</td><td>${sum[k].toFixed(1)}</td><td>${(sum[k]*1e6/px).toFixed(1)}</td></tr>`);
+ h+=`<tr><td>Окружность (50 000)</td><td>${sum.circ.toFixed(1)}</td><td>—</td></tr></table><p class="m">Всего пикселей на отрезках: ${px.toLocaleString('ru')}. Время одного прогона; для устойчивости запускайте 2–3 раза.</p>`;
+ $('bt').innerHTML=h;
+ chart($('c1'),'Отрезки: время от числа примитивов','число отрезков',S1);chart($('c2'),'20 000 отрезков: время от длины','длина отрезка, пикс.',S2);chart($('c3'),'Окружности: время от числа','число окружностей',S3);
+ $('bs').textContent='готово';$('bb').disabled=false};
+$('alg').onchange();go();
+</script></body></html>
